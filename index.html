@@ -117,6 +117,7 @@ input,select,textarea{font:inherit;color:inherit}
 .bt-s{background:#fff;border:1px solid var(--linha);color:var(--txt2)} .bt-s:hover{border-color:var(--azul2);color:var(--azul)}
 .bt-d{color:var(--verm);margin-left:auto}
 
+.box-ok{margin-top:14px;padding:12px 14px;background:var(--verd-bg);color:var(--verd);border-radius:8px;font-size:12.5px;font-weight:650}
 .arq{display:flex;align-items:center;gap:10px;padding:11px 13px;background:var(--verd-bg);border-radius:8px;font-size:12.5px}
 .arq .nome{flex:1;font-weight:650;color:var(--verd);word-break:break-all}
 .envio{display:flex;align-items:center;gap:9px;padding:11px 13px;border:1px dashed var(--linha);border-radius:8px;font-size:12.5px;color:var(--txt2)}
@@ -222,6 +223,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_MTMJaYe0e2kplnrR_TZfpA_Hq8JXXGK";
       </div>
       <button class="chip alerta" data-f="urgente">Urgentes</button>
       <button class="chip alerta" data-f="atrasado">Atrasados</button>
+      <button class="chip alerta" data-f="naoaberto">Entregues sem abrir</button>
       <span id="filtroCli" style="display:flex;gap:7px;flex-wrap:wrap"></span>
     </div>
     <div class="board" id="board"></div>
@@ -385,6 +387,7 @@ function visiveis(){
   }
   if(filtros.has('urgente'))  l = l.filter(c=>c.urgente);
   if(filtros.has('atrasado')) l = l.filter(c=>dias(c.criado_em)>=3 && !['entregue','concluido'].includes(c.etapa));
+  if(filtros.has('naoaberto')) l = l.filter(c=>c.etapa==='entregue' && !c.parecer_aberto_em);
   filtros.forEach(f=>{ if(f.startsWith('cli:')) l = l.filter(c=>c.cliente_id===f.slice(4)); });
   return l;
 }
@@ -426,6 +429,12 @@ function cartao(c){
     </div>
     ${nS?`<div class="card-socios">${nS} sócio${nS>1?'s':''} · ${cobertura(c)}% pesquisado</div>`:''}
     ${c.resultado?`<div class="card-socios"><span class="tag ${(RESULTADOS.find(r=>r.id===c.resultado)||{}).cls}">${rotuloResultado(c.resultado)}</span></div>`:''}
+    ${c.etapa==='entregue' ? `<div class="card-socios">${
+        c.parecer_aberto_em
+          ? `<span style="color:var(--verd);font-weight:650">✓ aberto pelo cliente</span>`
+          : `<span style="color:var(--verm);font-weight:650">● ainda não aberto</span>`
+      }</div>` : ''}
+    ${c.ciencia_em?`<div class="card-socios"><span style="color:var(--verd);font-weight:650">✓ ciência dada</span></div>`:''}
   </div>`;
 }
 
@@ -452,6 +461,10 @@ function pintarCliente(){
       </div>
       <div class="trilha">${trilha}</div>
       ${c.parecer?`<button class="baixar" data-baixar="${c.id}">↓ Parecer</button>`:''}
+      ${c.parecer && !c.ciencia_em
+        ? `<button class="baixar" data-ciencia="${c.id}" style="background:var(--azul-bg);color:var(--azul2)">✓ Confirmar recebimento</button>`
+        : ''}
+      ${c.ciencia_em?`<span style="font-size:11px;color:var(--verd);font-weight:650;white-space:nowrap">✓ recebimento confirmado</span>`:''}
     </div>`;
   }).join('') : '<div class="cli-card"><div class="vazio" style="width:100%">Nenhum pedido ainda. Use “Novo pedido”.</div></div>';
 }
@@ -465,11 +478,138 @@ const fecharG = () => { gav.classList.remove('on'); fundo.classList.remove('on')
 document.getElementById('gavFechar').onclick = fecharG;
 fundo.onclick = fecharG;
 
-async function baixarArquivo(caminho){
+async function baixarArquivo(caminho, caso){
   if(!caminho) return;
   const { data, error } = await sb.storage.from('relatorios').createSignedUrl(caminho, 60);
   if(error){ alert('Não foi possível abrir o arquivo: '+error.message); return; }
   window.open(data.signedUrl, '_blank');
+  // Quando é o cliente abrindo o parecer, registra a data da primeira leitura.
+  // É o que permite ao escritório saber que foi entregue de fato.
+  if(caso && !ehEscritorio() && caminho === caso.parecer){
+    await sb.rpc('registrar_abertura', {p_caso: caso.id});
+    await carregar();
+  }
+}
+
+async function darCiencia(caso){
+  if(!confirm('Confirmar o recebimento do parecer de '+caso.cedente+'?\n\nO caso será encerrado.')) return;
+  const { error } = await sb.rpc('dar_ciencia', {p_caso: caso.id});
+  if(error){ alert('Não foi possível confirmar: '+error.message); return; }
+  fecharG(); await carregar();
+}
+
+const dataHora = d => d ? new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : null;
+
+/* -------------------------------------------------------------------------
+   Ficha do pedido — abre uma janela com o documento pronto para impressão.
+   O navegador oferece "Salvar como PDF" na própria caixa de impressão.
+   ------------------------------------------------------------------------- */
+function fichaPedido(c){
+  const adm = ehEscritorio();
+  const cli = nomeCliente(c.cliente_id);
+  const socios = c.socios || [];
+  const alvos = [{nome:c.cedente, doc:c.cnpj, k:'emp'}]
+    .concat(socios.map((s,i)=>({nome:s.nome, doc:s.cpf, k:'s'+i})));
+  const g = c.grade || {};
+  const rotGrade = v => v===1 ? 'Nada consta' : v===2 ? 'Com processos' : 'Pendente';
+  const emissao = new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  const linha = (rot,val) => val ? `<tr><th>${rot}</th><td>${esc(val)}</td></tr>` : '';
+
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Ficha do pedido — ${esc(c.cedente)}</title>
+<style>
+  @page{size:A4;margin:18mm 16mm}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI",Arial,sans-serif;color:#1f2733;font-size:11pt;line-height:1.55}
+  .topo{display:flex;align-items:center;gap:14px;border-bottom:3px solid #b9a46a;padding-bottom:12px;margin-bottom:6px}
+  .fa{background:#14243d;color:#b9a46a;width:46px;height:46px;border-radius:9px;display:flex;
+      align-items:center;justify-content:center;font-size:16px;font-weight:800;letter-spacing:-1px}
+  .topo h1{font-size:15pt;color:#14243d;line-height:1.25}
+  .topo .sub{font-size:9pt;color:#67717f}
+  .emissao{margin-left:auto;text-align:right;font-size:8.5pt;color:#67717f}
+  h2{font-size:10pt;text-transform:uppercase;letter-spacing:.6px;color:#14243d;
+     margin:20px 0 7px;padding-left:8px;border-left:3px solid #b9a46a}
+  table{width:100%;border-collapse:collapse;font-size:10pt}
+  th,td{padding:6px 8px;border-bottom:.5pt solid #e3e6ea;text-align:left;vertical-align:top}
+  th{width:4.6cm;color:#5d6875;font-weight:600}
+  table.lista th{width:auto;background:#f2f4f7;border:.5pt solid #dcdcdc;font-size:8.5pt;
+                 text-transform:uppercase;letter-spacing:.3px}
+  table.lista td{border:.5pt solid #dcdcdc}
+  .urg{display:inline-block;background:#fdecea;color:#a4261b;font-size:8pt;font-weight:800;
+       padding:2px 7px;border-radius:4px;letter-spacing:.4px}
+  .obs{background:#f7f8fa;border-left:3px solid #b9a46a;padding:10px 13px;margin-top:6px;font-size:10pt}
+  .pe{margin-top:26px;padding-top:10px;border-top:.5pt solid #e3e6ea;font-size:8pt;color:#8b95a3;text-align:center}
+  @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
+</style></head><body>
+
+<div class="topo">
+  <div class="fa">F|A</div>
+  <div>
+    <h1>Ficha do Pedido de Análise de Cedente</h1>
+    <div class="sub">Felipe Albuquerque Advocacia</div>
+  </div>
+  <div class="emissao">Emitida em<br>${emissao}</div>
+</div>
+
+<h2>Pedido</h2>
+<table>
+  ${linha('Cliente solicitante', cli)}
+  ${linha('Data da solicitação', brl(c.criado_em))}
+  <tr><th>Prioridade</th><td>${c.urgente ? '<span class="urg">URGENTE</span>' : 'Normal'}</td></tr>
+  ${linha('Situação atual', (ETAPAS.find(e=>e.id===c.etapa)||{}).nome)}
+</table>
+
+<h2>Cedente</h2>
+<table>
+  ${linha('Razão social', c.cedente)}
+  ${linha('CNPJ', c.cnpj)}
+  ${linha('Endereço', c.endereco || 'não informado')}
+</table>
+
+<h2>Sócios e demais pesquisados</h2>
+${socios.length ? `<table class="lista">
+  <tr><th>Nome</th><th style="width:5cm">CPF</th></tr>
+  ${socios.map(s=>`<tr><td>${esc(s.nome)||'—'}</td><td>${esc(s.cpf)||'—'}</td></tr>`).join('')}
+</table>` : '<p style="font-size:10pt;color:#67717f">Nenhum sócio informado no pedido.</p>'}
+
+${c.obs ? `<h2>Observações do cliente</h2><div class="obs">${esc(c.obs)}</div>` : ''}
+
+${adm ? `
+<h2>Cobertura da pesquisa</h2>
+<table class="lista">
+  <tr><th>Pesquisado</th><th style="width:4.2cm">Documento</th>${TRIBUNAIS.map(t=>`<th style="width:3cm">${t}</th>`).join('')}</tr>
+  ${alvos.map(a=>`<tr><td>${esc(a.nome)||'—'}</td><td>${esc(a.doc)||'—'}</td>
+    ${TRIBUNAIS.map(t=>`<td>${rotGrade(g[a.k+'|'+t]||0)}</td>`).join('')}</tr>`).join('')}
+</table>
+
+<h2>Andamento</h2>
+<table>
+  <tr><th>Relatório de pesquisa</th><td>${c.relatorio ? 'enviado' : 'pendente'}</td></tr>
+  <tr><th>Parecer</th><td>${c.parecer ? 'enviado' : 'pendente'}${c.resultado ? ' — ' + rotuloResultado(c.resultado) : ''}</td></tr>
+  <tr><th>Aberto pelo cliente</th><td>${dataHora(c.parecer_aberto_em) || 'ainda não'}</td></tr>
+  <tr><th>Ciência</th><td>${dataHora(c.ciencia_em) || 'aguardando'}</td></tr>
+</table>
+${c.notas ? `<h2>Anotações internas</h2><div class="obs">${esc(c.notas)}</div>
+  <p style="font-size:8pt;color:#a4261b;margin-top:5px">Documento de uso interno — contém anotações não destinadas ao cliente.</p>` : ''}
+` : `
+<h2>Andamento</h2>
+<table>
+  <tr><th>Situação</th><td>${(ETAPAS.find(e=>e.id===c.etapa)||{}).cli}</td></tr>
+  ${c.parecer ? `<tr><th>Parecer</th><td>disponível para download no painel${c.resultado ? ' — ' + rotuloResultado(c.resultado) : ''}</td></tr>` : ''}
+</table>
+`}
+
+<div class="pe">Documento gerado pelo Painel de Análise de Cedentes — Felipe Albuquerque Advocacia</div>
+</body></html>`;
+
+  const w = window.open('', '_blank');
+  if(!w){ alert('O navegador bloqueou a janela. Libere os pop-ups para este site e tente de novo.'); return; }
+  w.document.write(html);
+  w.document.close();
+  w.onload = () => { w.focus(); w.print(); };
+  // alguns navegadores disparam onload antes do write terminar
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 400);
 }
 
 // Envia um PDF. tipo = 'relatorio' (interno) ou 'parecer' (vai ao cliente).
@@ -535,6 +675,16 @@ function abrirCaso(id){
       Assinado pelo advogado. O envio marca o caso como entregue.
       ${c.parecer?'<b>Substituir troca o arquivo que o cliente baixa.</b>':''}
     </div>
+    ${c.etapa==='entregue' || c.ciencia_em ? `
+    <div class="linha-d" style="margin-top:8px"><div class="rot">Aberto pelo cliente</div>
+      <div class="val">${c.parecer_aberto_em
+        ? '<span style="color:var(--verd)">'+dataHora(c.parecer_aberto_em)+'</span>'
+        : '<span style="color:var(--verm)">ainda não abriu</span>'}</div></div>
+    <div class="linha-d"><div class="rot">Ciência</div>
+      <div class="val">${c.ciencia_em
+        ? '<span style="color:var(--verd)">'+dataHora(c.ciencia_em)+'</span>'
+        : '<span style="color:var(--txt2);font-weight:400">aguardando confirmação do cliente</span>'}</div></div>
+    `:''}
     <div style="margin-top:10px">
       <label style="font-size:12px;font-weight:650;color:#48525f;display:block;margin-bottom:4px">Conclusão do parecer</label>
       <select id="fResultado" style="width:100%;padding:9px 11px;border:1px solid var(--linha);border-radius:7px">
@@ -547,7 +697,15 @@ function abrirCaso(id){
     ${c.parecer
       ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
            <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>
-         ${c.resultado?`<div class="linha-d" style="margin-top:8px"><div class="rot">Conclusão</div><div class="val">${rotuloResultado(c.resultado)}</div></div>`:''}`
+         ${c.resultado?`<div class="linha-d" style="margin-top:8px"><div class="rot">Conclusão</div><div class="val">${rotuloResultado(c.resultado)}</div></div>`:''}
+         ${c.ciencia_em
+           ? `<div class="box-ok">✓ Recebimento confirmado em ${dataHora(c.ciencia_em)}</div>`
+           : `<div style="margin-top:14px;padding:13px;background:#f7f8fa;border-radius:8px">
+                <div style="font-size:12.5px;color:var(--txt2);margin-bottom:9px">
+                  Depois de ler o parecer, confirme o recebimento para encerrar o pedido.
+                </div>
+                <button class="bt bt-p" id="btCiencia" style="width:100%">Confirmar recebimento</button>
+              </div>`}`
       : `<div class="envio">Ainda em elaboração.</div>`}
     `}
 
@@ -576,13 +734,21 @@ function abrirCaso(id){
     `}
   `;
   document.getElementById('gavPe').innerHTML = adm
-    ? `<button class="bt bt-p" id="btSalvar">Salvar</button><button class="bt bt-s" id="btFechar2">Fechar</button><button class="bt bt-d" id="btExcluir">Excluir</button>`
-    : `<button class="bt bt-s" id="btFechar2">Fechar</button>`;
+    ? `<button class="bt bt-p" id="btSalvar">Salvar</button>
+       <button class="bt bt-s" id="btFicha">↓ Ficha do pedido</button>
+       <button class="bt bt-s" id="btFechar2">Fechar</button>
+       <button class="bt bt-d" id="btExcluir">Excluir</button>`
+    : `<button class="bt bt-s" id="btFicha">↓ Ficha do pedido</button>
+       <button class="bt bt-s" id="btFechar2">Fechar</button>`;
 
   const bRel = document.getElementById('btBaixarRel');
-  if(bRel) bRel.onclick = () => baixarArquivo(c.relatorio);
+  if(bRel) bRel.onclick = () => baixarArquivo(c.relatorio, c);
   const bPar = document.getElementById('btBaixarPar');
-  if(bPar) bPar.onclick = () => baixarArquivo(c.parecer);
+  if(bPar) bPar.onclick = () => baixarArquivo(c.parecer, c);
+  const bCie = document.getElementById('btCiencia');
+  if(bCie) bCie.onclick = () => darCiencia(c);
+  const bFic = document.getElementById('btFicha');
+  if(bFic) bFic.onclick = () => fichaPedido(c);
 
   const fRel = document.getElementById('fRel');
   if(fRel) fRel.onchange = async () => {
@@ -714,8 +880,10 @@ document.querySelector('.barra').addEventListener('click', e => {
   b.classList.toggle('on'); pintarBoard();
 });
 document.getElementById('cliLista').addEventListener('click', e => {
+  const bc = e.target.closest('[data-ciencia]');
+  if(bc){ const c = casos.find(x=>x.id===bc.dataset.ciencia); if(c) darCiencia(c); return; }
   const bx = e.target.closest('[data-baixar]');
-  if(bx){ const c = casos.find(x=>x.id===bx.dataset.baixar); if(c) baixarArquivo(c.parecer); return; }
+  if(bx){ const c = casos.find(x=>x.id===bx.dataset.baixar); if(c) baixarArquivo(c.parecer, c); return; }
   const card = e.target.closest('.cli-card');
   if(card && card.dataset.id) abrirCaso(card.dataset.id);
 });
