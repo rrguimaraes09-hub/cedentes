@@ -262,9 +262,16 @@ const ETAPAS = [
   {id:'recebido',  nome:'Recebidos',    cor:'#6b7b93', cli:'Recebido'},
   {id:'pesquisa',  nome:'Em pesquisa',  cor:'#b9a46a', cli:'Em análise'},
   {id:'relatorio', nome:'Em relatório', cor:'#2f6f9e', cli:'Em análise'},
+  {id:'parecer',   nome:'Em parecer',   cor:'#6b4fa0', cli:'Em análise'},
   {id:'entregue',  nome:'Entregue',     cor:'#1e6b3a', cli:'Pronto'},
   {id:'concluido', nome:'Concluído',    cor:'#98a1ad', cli:'Concluído'}
 ];
+const RESULTADOS = [
+  {id:'favoravel',           rot:'Favorável',              cls:'t-nada'},
+  {id:'favoravel_ressalvas', rot:'Favorável com ressalvas', cls:'t-sus'},
+  {id:'negativo',            rot:'Negativo',                cls:'t-mov'}
+];
+const rotuloResultado = r => (RESULTADOS.find(x=>x.id===r)||{}).rot || '—';
 const TRILHA = ['Recebido','Em análise','Pronto'];
 const TRIBUNAIS = ['TJSC','JFSC'];
 
@@ -418,6 +425,7 @@ function cartao(c){
       <span class="relogio ${rc}">◷ ${d===0?'hoje':d+'d'}</span>
     </div>
     ${nS?`<div class="card-socios">${nS} sócio${nS>1?'s':''} · ${cobertura(c)}% pesquisado</div>`:''}
+    ${c.resultado?`<div class="card-socios"><span class="tag ${(RESULTADOS.find(r=>r.id===c.resultado)||{}).cls}">${rotuloResultado(c.resultado)}</span></div>`:''}
   </div>`;
 }
 
@@ -430,7 +438,8 @@ function pintarCliente(){
   const l = visiveis();
   document.getElementById('cliTitulo').textContent = 'Pedidos de análise — '+eu.nome;
   document.getElementById('cliLista').innerHTML = l.length ? l.map(c=>{
-    const at = c.etapa==='recebido'?0:(c.etapa==='pesquisa'||c.etapa==='relatorio')?1:2;
+    const at = c.etapa==='recebido' ? 0
+             : ['pesquisa','relatorio','parecer'].includes(c.etapa) ? 1 : 2;
     const trilha = TRILHA.map((t,i)=>{
       const cls = i<at?'feito':i===at?'atual':'';
       const barra = i<TRILHA.length-1 ? `<div class="barra-l ${i<at?'feito':''}"></div>` : '';
@@ -442,7 +451,7 @@ function pintarCliente(){
         <div class="cli-meta">${esc(c.cnpj)} · solicitado em ${brl(c.criado_em)}</div>
       </div>
       <div class="trilha">${trilha}</div>
-      ${c.relatorio?`<button class="baixar" data-baixar="${c.id}">↓ Relatório</button>`:''}
+      ${c.parecer?`<button class="baixar" data-baixar="${c.id}">↓ Parecer</button>`:''}
     </div>`;
   }).join('') : '<div class="cli-card"><div class="vazio" style="width:100%">Nenhum pedido ainda. Use “Novo pedido”.</div></div>';
 }
@@ -456,10 +465,29 @@ const fecharG = () => { gav.classList.remove('on'); fundo.classList.remove('on')
 document.getElementById('gavFechar').onclick = fecharG;
 fundo.onclick = fecharG;
 
-async function baixarRelatorio(c){
-  const { data, error } = await sb.storage.from('relatorios').createSignedUrl(c.relatorio, 60);
-  if(error){ alert('Não foi possível abrir o relatório: '+error.message); return; }
+async function baixarArquivo(caminho){
+  if(!caminho) return;
+  const { data, error } = await sb.storage.from('relatorios').createSignedUrl(caminho, 60);
+  if(error){ alert('Não foi possível abrir o arquivo: '+error.message); return; }
   window.open(data.signedUrl, '_blank');
+}
+
+// Envia um PDF. tipo = 'relatorio' (interno) ou 'parecer' (vai ao cliente).
+async function enviarArquivo(c, arquivo, tipo, aoTerminar){
+  const nome = arquivo.name.replace(/[^\w.\-]/g,'_');
+  // O relatório de pesquisa vai para a pasta interna, fora do alcance do cliente.
+  const caminho = tipo === 'parecer'
+    ? `${c.cliente_id}/${c.id}/parecer-${nome}`
+    : `_interno/${c.id}/relatorio-${nome}`;
+  const { error } = await sb.storage.from('relatorios')
+    .upload(caminho, arquivo, {upsert:true, contentType:'application/pdf'});
+  if(error){ alert('Falha no envio: '+error.message); return; }
+  const campos = tipo === 'parecer'
+    ? {parecer: caminho, etapa: 'entregue'}
+    : {relatorio: caminho, etapa: 'parecer'};
+  await sb.from('casos').update(campos).eq('id', c.id);
+  await carregar();
+  if(aoTerminar) aoTerminar();
 }
 
 function abrirCaso(id){
@@ -478,13 +506,40 @@ function abrirCaso(id){
     ${(c.socios||[]).length?`<div class="linha-d"><div class="rot">Sócios</div><div class="val">${c.socios.map(s=>esc(s.nome)+' — '+esc(s.cpf)).join('<br>')}</div></div>`:''}
     ${c.obs?`<div class="linha-d"><div class="rot">Observações</div><div class="val" style="font-weight:400">${esc(c.obs)}</div></div>`:''}
 
-    <div class="gav-sec">Relatório</div>
+    ${adm?`
+    <div class="gav-sec">Relatório de pesquisa — uso interno</div>
     ${c.relatorio
-      ? `<div class="arq"><span>📄</span><span class="nome">${esc(c.relatorio.split('/').pop())}</span>
-           <button class="bt bt-s" id="btBaixar">Abrir</button></div>`
-      : (adm ? `<div class="envio"><input type="file" id="fArq" accept="application/pdf"></div>
-                <div style="font-size:11px;color:var(--txt2);margin-top:5px">O envio marca o caso como entregue.</div>`
-             : `<div class="envio">Ainda não disponível.</div>`)}
+      ? `<div class="arq" style="background:#eef1f5"><span>📄</span>
+           <span class="nome" style="color:#3d4756">${esc(c.relatorio.split('/').pop())}</span>
+           <button class="bt bt-s" id="btBaixarRel">Abrir</button></div>`
+      : `<div class="envio"><input type="file" id="fRel" accept="application/pdf"></div>`}
+    <div style="font-size:11px;color:var(--txt2);margin-top:5px">
+      Insumo da análise. <b>O cliente não vê este arquivo.</b> O envio leva o caso para “Em parecer”.
+    </div>
+
+    <div class="gav-sec">Parecer — entregue ao cliente</div>
+    ${c.parecer
+      ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
+           <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>`
+      : `<div class="envio"><input type="file" id="fPar" accept="application/pdf"></div>`}
+    <div style="font-size:11px;color:var(--txt2);margin-top:5px">
+      Assinado pelo advogado. O envio marca o caso como entregue.
+    </div>
+    <div style="margin-top:10px">
+      <label style="font-size:12px;font-weight:650;color:#48525f;display:block;margin-bottom:4px">Conclusão do parecer</label>
+      <select id="fResultado" style="width:100%;padding:9px 11px;border:1px solid var(--linha);border-radius:7px">
+        <option value="">— ainda não concluído —</option>
+        ${RESULTADOS.map(r=>`<option value="${r.id}" ${c.resultado===r.id?'selected':''}>${r.rot}</option>`).join('')}
+      </select>
+    </div>
+    `:`
+    <div class="gav-sec">Parecer</div>
+    ${c.parecer
+      ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
+           <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>
+         ${c.resultado?`<div class="linha-d" style="margin-top:8px"><div class="rot">Conclusão</div><div class="val">${rotuloResultado(c.resultado)}</div></div>`:''}`
+      : `<div class="envio">Ainda em elaboração.</div>`}
+    `}
 
     ${adm?`
     <div class="gav-sec">Grade de cobertura — ${cobertura(c)}% concluída</div>
@@ -514,17 +569,26 @@ function abrirCaso(id){
     ? `<button class="bt bt-p" id="btSalvar">Salvar</button><button class="bt bt-s" id="btFechar2">Fechar</button><button class="bt bt-d" id="btExcluir">Excluir</button>`
     : `<button class="bt bt-s" id="btFechar2">Fechar</button>`;
 
-  const bb = document.getElementById('btBaixar');
-  if(bb) bb.onclick = () => baixarRelatorio(c);
+  const bRel = document.getElementById('btBaixarRel');
+  if(bRel) bRel.onclick = () => baixarArquivo(c.relatorio);
+  const bPar = document.getElementById('btBaixarPar');
+  if(bPar) bPar.onclick = () => baixarArquivo(c.parecer);
 
-  const fa = document.getElementById('fArq');
-  if(fa) fa.onchange = async () => {
-    const f = fa.files[0]; if(!f) return;
-    const caminho = `${c.cliente_id}/${c.id}/${f.name.replace(/[^\w.\-]/g,'_')}`;
-    fa.disabled = true;
-    const { error } = await sb.storage.from('relatorios').upload(caminho, f, {upsert:true, contentType:'application/pdf'});
-    if(error){ alert('Falha no envio: '+error.message); fa.disabled=false; return; }
-    await sb.from('casos').update({relatorio:caminho, etapa:'entregue'}).eq('id',c.id);
+  const fRel = document.getElementById('fRel');
+  if(fRel) fRel.onchange = async () => {
+    const f = fRel.files[0]; if(!f) return;
+    fRel.disabled = true;
+    await enviarArquivo(c, f, 'relatorio', () => abrirCaso(id));
+  };
+  const fPar = document.getElementById('fPar');
+  if(fPar) fPar.onchange = async () => {
+    const f = fPar.files[0]; if(!f) return;
+    fPar.disabled = true;
+    await enviarArquivo(c, f, 'parecer', () => abrirCaso(id));
+  };
+  const fRes = document.getElementById('fResultado');
+  if(fRes) fRes.onchange = async () => {
+    await sb.from('casos').update({resultado: fRes.value || null}).eq('id', c.id);
     await carregar(); abrirCaso(id);
   };
 
@@ -641,7 +705,7 @@ document.querySelector('.barra').addEventListener('click', e => {
 });
 document.getElementById('cliLista').addEventListener('click', e => {
   const bx = e.target.closest('[data-baixar]');
-  if(bx){ const c = casos.find(x=>x.id===bx.dataset.baixar); if(c) baixarRelatorio(c); return; }
+  if(bx){ const c = casos.find(x=>x.id===bx.dataset.baixar); if(c) baixarArquivo(c.parecer); return; }
   const card = e.target.closest('.cli-card');
   if(card && card.dataset.id) abrirCaso(card.dataset.id);
 });
