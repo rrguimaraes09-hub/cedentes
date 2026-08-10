@@ -482,6 +482,11 @@ async function enviarArquivo(c, arquivo, tipo, aoTerminar){
   const { error } = await sb.storage.from('relatorios')
     .upload(caminho, arquivo, {upsert:true, contentType:'application/pdf'});
   if(error){ alert('Falha no envio: '+error.message); return; }
+  // se estava substituindo um arquivo de nome diferente, remove o antigo
+  const anterior = tipo === 'parecer' ? c.parecer : c.relatorio;
+  if(anterior && anterior !== caminho){
+    await sb.storage.from('relatorios').remove([anterior]);
+  }
   const campos = tipo === 'parecer'
     ? {parecer: caminho, etapa: 'entregue'}
     : {relatorio: caminho, etapa: 'parecer'};
@@ -511,7 +516,9 @@ function abrirCaso(id){
     ${c.relatorio
       ? `<div class="arq" style="background:#eef1f5"><span>📄</span>
            <span class="nome" style="color:#3d4756">${esc(c.relatorio.split('/').pop())}</span>
-           <button class="bt bt-s" id="btBaixarRel">Abrir</button></div>`
+           <button class="bt bt-s" id="btBaixarRel">Abrir</button></div>
+         <div class="envio" style="margin-top:6px"><span style="font-size:11px">Substituir:</span>
+           <input type="file" id="fRel" accept="application/pdf"></div>`
       : `<div class="envio"><input type="file" id="fRel" accept="application/pdf"></div>`}
     <div style="font-size:11px;color:var(--txt2);margin-top:5px">
       Insumo da análise. <b>O cliente não vê este arquivo.</b> O envio leva o caso para “Em parecer”.
@@ -520,10 +527,13 @@ function abrirCaso(id){
     <div class="gav-sec">Parecer — entregue ao cliente</div>
     ${c.parecer
       ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
-           <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>`
+           <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>
+         <div class="envio" style="margin-top:6px"><span style="font-size:11px">Substituir:</span>
+           <input type="file" id="fPar" accept="application/pdf"></div>`
       : `<div class="envio"><input type="file" id="fPar" accept="application/pdf"></div>`}
     <div style="font-size:11px;color:var(--txt2);margin-top:5px">
       Assinado pelo advogado. O envio marca o caso como entregue.
+      ${c.parecer?'<b>Substituir troca o arquivo que o cliente baixa.</b>':''}
     </div>
     <div style="margin-top:10px">
       <label style="font-size:12px;font-weight:650;color:#48525f;display:block;margin-bottom:4px">Conclusão do parecer</label>
