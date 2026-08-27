@@ -197,7 +197,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_MTMJaYe0e2kplnrR_TZfpA_Hq8JXXGK";
     <div class="erro" id="loginErro"></div>
     <div class="rodape">
       Acesso restrito. O cadastro de usuários é feito pelo escritório.<br>
-      Em caso de dificuldade, procure <b>contato@felipeadv.com.br</b>.
+      Em caso de dificuldade, procure <b>rafael@felipeadv.com.br</b>.
     </div>
   </form>
 </div>
@@ -258,6 +258,7 @@ let sb = null;
 let eu = null;              // {user_id, nome, papel, cliente_id}
 let clientes = [];          // [{id, nome}]
 let casos = [];
+let anexos = [];            // anexos de todos os casos visíveis (o RLS filtra)
 let filtros = new Set(), busca = '', abertoId = null;
 
 const ETAPAS = [
@@ -359,6 +360,7 @@ async function entrar(){
   // tempo real: qualquer mudança relevante repinta a tela
   sb.channel('casos-vivo')
     .on('postgres_changes', {event:'*', schema:'public', table:'casos'}, carregar)
+    .on('postgres_changes', {event:'*', schema:'public', table:'casos_anexos'}, carregar)
     .subscribe();
 
   await carregar();
@@ -374,6 +376,9 @@ async function carregar(){
   if(error){ aviso('Não foi possível carregar os pedidos. '+esc(error.message),'err'); return; }
   aviso('');
   casos = data || [];
+  // Anexos dos pedidos. Se o ajuste do banco ainda não rodou, segue sem eles.
+  const rAnx = await sb.from('casos_anexos').select('*').order('enviado_em');
+  anexos = rAnx.data || [];
   document.getElementById('visaoEscritorio').classList.toggle('oculto', !ehEscritorio());
   document.getElementById('visaoCliente').classList.toggle('oculto', ehEscritorio());
   ehEscritorio() ? (pintarFiltros(), pintarBoard()) : pintarCliente();
@@ -489,6 +494,42 @@ async function baixarArquivo(caminho, caso){
     await sb.rpc('registrar_abertura', {p_caso: caso.id});
     await carregar();
   }
+}
+
+/* ---------- anexos do pedido ---------- */
+const anexosDoCaso = id => anexos.filter(a => a.caso_id === id);
+
+async function abrirAnexo(a){
+  const { data, error } = await sb.storage.from('anexos-cedentes').createSignedUrl(a.caminho, 300);
+  if(error){ alert('Não foi possível abrir o arquivo: '+error.message); return; }
+  window.open(data.signedUrl, '_blank');
+}
+
+// Sobe uma lista de arquivos para um caso. Devolve os nomes que falharam.
+async function enviarAnexos(casoId, lista){
+  const { data:{ user } } = await sb.auth.getUser();
+  const falhas = [];
+  for(const f of lista){
+    const limpo = f.name.replace(/[^\w.\- ]/g,'_');
+    const caminho = `${casoId}/${crypto.randomUUID().slice(0,8)}-${limpo}`;
+    const { error } = await sb.storage.from('anexos-cedentes')
+      .upload(caminho, f, {contentType: f.type || 'application/octet-stream'});
+    if(error){ falhas.push(f.name+' ('+error.message+')'); continue; }
+    const { error:e2 } = await sb.from('casos_anexos').insert({
+      caso_id: casoId, nome: f.name, caminho, tamanho: f.size, enviado_por: user.id
+    });
+    if(e2){ falhas.push(f.name+' ('+e2.message+')'); await sb.storage.from('anexos-cedentes').remove([caminho]); }
+  }
+  return falhas;
+}
+
+async function apagarAnexo(a){
+  if(!confirm('Remover o arquivo "'+a.nome+'"?')) return false;
+  // A linha sai primeiro: é o RLS dela que decide quem pode. Só então o arquivo.
+  const { error } = await sb.from('casos_anexos').delete().eq('id', a.id);
+  if(error){ alert('Não foi possível remover: '+error.message); return false; }
+  await sb.storage.from('anexos-cedentes').remove([a.caminho]);
+  return true;
 }
 
 async function darCiencia(caso){
@@ -651,6 +692,20 @@ function abrirCaso(id){
     ${(c.socios||[]).length?`<div class="linha-d"><div class="rot">Sócios</div><div class="val">${c.socios.map(s=>esc(s.nome)+' — '+esc(s.cpf)).join('<br>')}</div></div>`:''}
     ${c.obs?`<div class="linha-d"><div class="rot">Observações</div><div class="val" style="font-weight:400">${esc(c.obs)}</div></div>`:''}
 
+    <div class="gav-sec">Documentos do pedido</div>
+    ${anexosDoCaso(c.id).length
+      ? anexosDoCaso(c.id).map(a=>`<div class="arq"><span>📎</span>
+          <span class="nome">${esc(a.nome)}</span>
+          <button class="bt bt-s" data-anexo="${a.id}">Abrir</button>
+          ${adm || c.etapa==='recebido' ? `<button class="bt bt-d" data-anexo-rm="${a.id}" title="Remover">✕</button>` : ''}
+        </div>`).join('')
+      : `<div style="font-size:12.5px;color:var(--txt2)">Nenhum documento anexado ao pedido.</div>`}
+    ${adm || !['entregue','concluido'].includes(c.etapa) ? `
+    <div class="envio" style="margin-top:8px"><input type="file" id="fAnexo" multiple></div>
+    <div style="font-size:11px;color:var(--txt2);margin-top:5px">
+      Cartão CNPJ, contrato social, CPF dos sócios e o que mais ajudar na análise. Pode selecionar vários de uma vez.
+    </div>` : ''}
+
     ${adm?`
     <div class="gav-sec">Relatório de pesquisa — uso interno</div>
     ${c.relatorio
@@ -741,6 +796,22 @@ function abrirCaso(id){
     : `<button class="bt bt-s" id="btFicha">↓ Ficha do pedido</button>
        <button class="bt bt-s" id="btFechar2">Fechar</button>`;
 
+  gav.querySelectorAll('[data-anexo]').forEach(el => el.onclick = () => {
+    const a = anexos.find(x=>x.id===el.dataset.anexo); if(a) abrirAnexo(a);
+  });
+  gav.querySelectorAll('[data-anexo-rm]').forEach(el => el.onclick = async () => {
+    const a = anexos.find(x=>x.id===el.dataset.anexoRm);
+    if(a && await apagarAnexo(a)){ await carregar(); abrirCaso(id); }
+  });
+  const fAnx = document.getElementById('fAnexo');
+  if(fAnx) fAnx.onchange = async () => {
+    if(!fAnx.files.length) return;
+    fAnx.disabled = true;
+    const falhas = await enviarAnexos(c.id, [...fAnx.files]);
+    if(falhas.length) alert('Alguns arquivos não subiram:\n'+falhas.join('\n'));
+    await carregar(); abrirCaso(id);
+  };
+
   const bRel = document.getElementById('btBaixarRel');
   if(bRel) bRel.onclick = () => baixarArquivo(c.relatorio, c);
   const bPar = document.getElementById('btBaixarPar');
@@ -787,6 +858,9 @@ function abrirCaso(id){
   const bx = document.getElementById('btExcluir');
   if(bx) bx.onclick = async () => {
     if(!confirm('Excluir este pedido? A ação não pode ser desfeita.')) return;
+    // os arquivos do storage não saem em cascata: remove antes de apagar o caso
+    const arqs = anexosDoCaso(c.id).map(a=>a.caminho);
+    if(arqs.length) await sb.storage.from('anexos-cedentes').remove(arqs);
     await sb.from('casos').delete().eq('id',c.id);
     fecharG(); await carregar();
   };
@@ -808,6 +882,11 @@ function abrirNovo(){
       <div class="socio-l"><input placeholder="Nome completo"><input placeholder="CPF"><button type="button" class="rm">×</button></div>
     </div><button class="add" id="btAddSocio">+ adicionar sócio</button></div>
     <div class="form-g"><label>Observações</label><textarea class="notas" id="fObs" placeholder="Outros CNPJ/CPF relacionados, contexto da operação..."></textarea></div>
+    <div class="form-g"><label>Documentos do cedente</label>
+      <input type="file" id="fArqs" multiple>
+      <div style="font-size:11px;color:var(--txt2);margin-top:4px">
+        Cartão CNPJ, contrato social, CPF dos sócios e o que mais tiver. Pode selecionar vários; dá para anexar depois também, abrindo o pedido.
+      </div></div>
     <label class="check"><input type="checkbox" id="fUrg"> Marcar como urgente</label>
   `;
   document.getElementById('gavPe').innerHTML =
@@ -831,14 +910,22 @@ function abrirNovo(){
       return {nome:i[0].value.trim(), cpf:i[1].value.trim()};
     }).filter(s=>s.nome||s.cpf);
     const { data:{ user } } = await sb.auth.getUser();
-    const { error } = await sb.from('casos').insert({
+    const bt = document.getElementById('btCriar');
+    bt.disabled = true; bt.textContent = 'Enviando…';
+    const { data:novo, error } = await sb.from('casos').insert({
       cliente_id: adm ? document.getElementById('fCli').value : eu.cliente_id,
       cedente: ced, cnpj, endereco: document.getElementById('fEnd').value.trim(),
       socios, urgente: document.getElementById('fUrg').checked,
       obs: document.getElementById('fObs').value.trim(),
       etapa:'recebido', grade:{}, criado_por: user.id
-    });
-    if(error){ alert('Não foi possível enviar: '+error.message); return; }
+    }).select('id').single();
+    if(error){ alert('Não foi possível enviar: '+error.message); bt.disabled=false; bt.textContent='Enviar pedido'; return; }
+    const fArqs = document.getElementById('fArqs');
+    if(fArqs && fArqs.files.length){
+      bt.textContent = 'Enviando arquivos…';
+      const falhas = await enviarAnexos(novo.id, [...fArqs.files]);
+      if(falhas.length) alert('O pedido foi criado, mas alguns arquivos não subiram:\n'+falhas.join('\n')+'\n\nAbra o pedido e anexe de novo.');
+    }
     fecharG(); await carregar();
   };
   abrirG();
