@@ -273,6 +273,7 @@ let casos = [];
 let anexos = [];            // anexos de todos os casos visíveis (o RLS filtra)
 let filtros = new Set(), busca = '', abertoId = null;
 let ordProntos = 'fin';   // ordem das colunas Entregue/Concluído: fin | pedido
+let ordCli = 'recentes';  // ordem da lista do cliente: recentes | antigos
 
 const ETAPAS = [
   {id:'recebido',  nome:'Recebidos',    cor:'#6b7b93', cli:'Recebido'},
@@ -500,10 +501,18 @@ function pintarFiltros(){
 }
 
 function pintarCliente(){
-  const l = visiveis();
+  // Ordenação por data (pedido do Rafael, 28/08/2026): o cliente controla se vê
+  // os pedidos mais novos ou mais antigos primeiro. slice() evita mutar `casos`.
+  const l = visiveis().slice().sort((a,b)=> ordCli==='antigos'
+    ? String(a.criado_em||'').localeCompare(String(b.criado_em||''))
+    : String(b.criado_em||'').localeCompare(String(a.criado_em||'')));
   document.getElementById('cliTitulo').textContent = 'Pedidos de análise — '+eu.nome;
   document.getElementById('filtroCliStatus').innerHTML = GRUPOS_ETAPA.map(g=>
-    `<button class="chip ${filtros.has('st:'+g.id)?'on':''}" data-f="st:${g.id}">${g.rotCli}</button>`).join('');
+    `<button class="chip ${filtros.has('st:'+g.id)?'on':''}" data-f="st:${g.id}">${g.rotCli}</button>`).join('')
+    + `<select id="ordCli" class="chip" style="cursor:pointer" title="Ordenação da lista">
+         <option value="recentes" ${ordCli==='recentes'?'selected':''}>Mais recentes primeiro</option>
+         <option value="antigos" ${ordCli==='antigos'?'selected':''}>Mais antigos primeiro</option>
+       </select>`;
   document.getElementById('cliLista').innerHTML = l.length ? l.map(c=>{
     const at = c.etapa==='recebido' ? 0
              : ['pesquisa','relatorio','parecer'].includes(c.etapa) ? 1 : 2;
@@ -515,7 +524,12 @@ function pintarCliente(){
     return `<div class="cli-card" data-id="${c.id}">
       <div class="info">
         <div class="cli-nome">${esc(c.cedente)} ${c.urgente?'<span class="tagurg">URGENTE</span>':''}</div>
-        <div class="cli-meta">${esc(c.cnpj)} · solicitado em ${brl(c.criado_em)}</div>
+        <div class="cli-meta">${esc(c.cnpj)} · solicitado em ${brl(c.criado_em)}${
+          ['entregue','concluido'].includes(c.etapa) ? '' : (() => {
+            const d = dias(c.criado_em);
+            return ` · <b style="color:${d>=3?'var(--verm)':'inherit'}">aguardando ${d===0?'desde hoje':'há '+d+' dia'+(d===1?'':'s')}</b>`;
+          })()
+        }</div>
       </div>
       <div class="trilha">${trilha}</div>
       ${c.parecer?`<button class="baixar" data-baixar="${c.id}">↓ Parecer</button>`:''}
@@ -1072,9 +1086,12 @@ document.querySelector('.barra').addEventListener('click', e => {
 document.getElementById('ordProntos').onchange = e => { ordProntos = e.target.value; pintarBoard(); };
 document.getElementById('filtroCliStatus').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if(!b) return;
-  const f = b.dataset.f;
+  const f = b.dataset.f; if(!f) return;
   filtros.has(f) ? filtros.delete(f) : filtros.add(f);
   pintarCliente();
+});
+document.getElementById('filtroCliStatus').addEventListener('change', e => {
+  if(e.target.id === 'ordCli'){ ordCli = e.target.value; pintarCliente(); }
 });
 document.getElementById('cliLista').addEventListener('click', e => {
   const bc = e.target.closest('[data-ciencia]');
