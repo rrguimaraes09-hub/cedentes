@@ -61,8 +61,8 @@ input,select,textarea{font:inherit;color:inherit}
 .chip.alerta.on{background:var(--verm);border-color:var(--verm)}
 
 /* ---------- kanban ---------- */
-.board{display:flex;gap:14px;padding:18px 20px 30px;overflow-x:auto;align-items:flex-start;min-height:calc(100vh - 130px)}
-.col{background:#eceef1;border-radius:var(--r);width:290px;min-width:290px;display:flex;flex-direction:column;max-height:calc(100vh - 165px)}
+.board{display:flex;gap:14px;padding:18px 20px 14px;overflow-x:auto;align-items:flex-start}
+.col{background:#eceef1;border-radius:var(--r);width:290px;min-width:290px;display:flex;flex-direction:column;max-height:100%}
 .col-topo{padding:12px 13px 9px;display:flex;align-items:center;gap:8px}
 .col-bola{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .col-nome{font-weight:700;font-size:12.5px;text-transform:uppercase;letter-spacing:.5px;color:#48525f}
@@ -231,6 +231,10 @@ const SUPABASE_ANON_KEY = "sb_publishable_MTMJaYe0e2kplnrR_TZfpA_Hq8JXXGK";
       <button class="chip alerta" data-f="urgente">Urgentes</button>
       <button class="chip alerta" data-f="atrasado">Atrasados</button>
       <button class="chip alerta" data-f="naoaberto">Entregues sem abrir</button>
+      <select id="ordProntos" class="chip" style="cursor:pointer" title="Ordenação das colunas Entregue e Concluído">
+        <option value="fin">Prontos: finalização recente</option>
+        <option value="pedido">Prontos: data do pedido</option>
+      </select>
       <span id="filtroCli" style="display:flex;gap:7px;flex-wrap:wrap"></span>
     </div>
     <div class="board" id="board"></div>
@@ -268,6 +272,7 @@ let clientes = [];          // [{id, nome}]
 let casos = [];
 let anexos = [];            // anexos de todos os casos visíveis (o RLS filtra)
 let filtros = new Set(), busca = '', abertoId = null;
+let ordProntos = 'fin';   // ordem das colunas Entregue/Concluído: fin | pedido
 
 const ETAPAS = [
   {id:'recebido',  nome:'Recebidos',    cor:'#6b7b93', cli:'Recebido'},
@@ -395,6 +400,12 @@ async function carregar(){
   if(error){ aviso('Não foi possível carregar os pedidos. '+esc(error.message),'err'); return; }
   aviso('');
   casos = data || [];
+  // Blindagem: se algum cadastro antigo gravou socios como {Count,value} (bug do
+  // ConvertTo-Json do PS 5.1, corrigido no robô em 28/08/2026), normaliza para lista.
+  casos.forEach(c => {
+    if(c.socios && !Array.isArray(c.socios))
+      c.socios = Array.isArray(c.socios.value) ? c.socios.value : [];
+  });
   // Anexos dos pedidos. Se o ajuste do banco ainda não rodou, segue sem eles.
   const rAnx = await sb.from('casos_anexos').select('*').order('enviado_em');
   anexos = rAnx.data || [];
@@ -437,8 +448,9 @@ function pintarBoard(){
     const cs = l.filter(c=>c.etapa===et.id);
     // Entregues/concluídos em ordem de finalização (pedido do Felipe, 28/08/2026):
     // o gatilho do banco carimba atualizado_em a cada mudança, então o caso que
-    // acabou de ser movido aparece no topo da coluna.
-    if(et.id==='entregue'||et.id==='concluido')
+    // acabou de ser movido aparece no topo. O seletor da barra troca para a
+    // ordem por data do pedido.
+    if(ordProntos==='fin' && (et.id==='entregue'||et.id==='concluido'))
       cs.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
     return `<div class="col" data-etapa="${et.id}">
       <div class="col-topo"><div class="col-bola" style="background:${et.cor}"></div>
@@ -447,7 +459,19 @@ function pintarBoard(){
     </div>`;
   }).join('');
   ligarArrasto();
+  ajustarBoard();
 }
+
+// A barra cresceu (chips de cliente) e a altura fixa antiga empurrava a rolagem
+// horizontal para baixo da dobra. O quadro agora ocupa exatamente o resto da
+// janela, então o scroll lateral fica sempre visível no pé da tela.
+function ajustarBoard(){
+  const b = document.getElementById('board');
+  if(!b || !b.innerHTML) return;
+  const topo = b.getBoundingClientRect().top;
+  b.style.height = Math.max(240, window.innerHeight - topo - 4) + 'px';
+}
+window.addEventListener('resize', ajustarBoard);
 
 function cartao(c){
   const d = dias(c.criado_em), nS = (c.socios||[]).length;
@@ -648,13 +672,6 @@ ${socios.length ? `<table class="lista">
 ${c.obs ? `<h2>Observações do cliente</h2><div class="obs">${esc(c.obs)}</div>` : ''}
 
 ${adm ? `
-<h2>Cobertura da pesquisa</h2>
-<table class="lista">
-  <tr><th>Pesquisado</th><th style="width:4.2cm">Documento</th>${TRIBUNAIS.map(t=>`<th style="width:3cm">${t}</th>`).join('')}</tr>
-  ${alvos.map(a=>`<tr><td>${esc(a.nome)||'—'}</td><td>${esc(a.doc)||'—'}</td>
-    ${TRIBUNAIS.map(t=>`<td>${rotGrade(g[a.k+'|'+t]||0)}</td>`).join('')}</tr>`).join('')}
-</table>
-
 <h2>Andamento</h2>
 <table>
   <tr><th>Relatório de pesquisa</th><td>${c.relatorio ? 'enviado' : 'pendente'}</td></tr>
@@ -818,18 +835,6 @@ async function abrirCaso(id){
     `}
 
     ${adm?`
-    <div class="gav-sec">Grade de cobertura — ${cobertura(c)}% concluída</div>
-    <table class="grade">
-      <tr><th>Pesquisado</th><th>Documento</th>${TRIBUNAIS.map(t=>`<th style="text-align:center">${t}</th>`).join('')}</tr>
-      ${alvos.map(a=>`<tr><td class="ent">${esc(a.nome)}</td><td style="font-size:11px">${esc(a.doc)}</td>
-        ${TRIBUNAIS.map(t=>{
-          const v=(c.grade||{})[a.k+'|'+t]||0, cls=v===0?'g0':v===1?'g1':'g2';
-          const txt=v===0?'pendente':v===1?'nada consta':'com processos';
-          return `<td><span class="gcel ${cls}" data-cel="${a.k}|${t}">${txt}</span></td>`;
-        }).join('')}</tr>`).join('')}
-    </table>
-    <div style="font-size:11px;color:var(--txt2);margin-top:6px">Clique na célula para alternar: pendente → nada consta → com processos.</div>
-
     <div class="gav-sec">Etapa</div>
     <div class="eta">${ETAPAS.map(e=>`<button class="${c.etapa===e.id?'on':''}" data-eta="${e.id}">${e.nome}</button>`).join('')}</div>
 
@@ -892,12 +897,6 @@ async function abrirCaso(id){
     await carregar(); abrirCaso(id);
   };
 
-  gav.querySelectorAll('[data-cel]').forEach(el => el.onclick = async () => {
-    const g = {...(c.grade||{})}; const k = el.dataset.cel;
-    g[k] = ((g[k]||0)+1)%3;
-    await sb.from('casos').update({grade:g}).eq('id',c.id);
-    await carregar(); abrirCaso(id);
-  });
   gav.querySelectorAll('[data-eta]').forEach(el => el.onclick = async () => {
     await sb.from('casos').update({etapa:el.dataset.eta}).eq('id',c.id);
     await carregar(); abrirCaso(id);
@@ -1066,10 +1065,11 @@ document.getElementById('btNovo').onclick = abrirNovo;
 document.getElementById('busca').oninput = e => { busca = e.target.value; pintarBoard(); };
 document.querySelector('.barra').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if(!b) return;
-  const f = b.dataset.f;
+  const f = b.dataset.f; if(!f) return;
   filtros.has(f) ? filtros.delete(f) : filtros.add(f);
   b.classList.toggle('on'); pintarBoard();
 });
+document.getElementById('ordProntos').onchange = e => { ordProntos = e.target.value; pintarBoard(); };
 document.getElementById('filtroCliStatus').addEventListener('click', e => {
   const b = e.target.closest('.chip'); if(!b) return;
   const f = b.dataset.f;
