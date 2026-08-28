@@ -461,13 +461,14 @@ function pintarBoard(){
     if(ordProntos==='fin' && (et.id==='entregue'||et.id==='concluido'))
       cs.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
     // Concluído esconde o arquivo morto (pedido do Rafael, 28/08/2026): só os
-    // pedidos dos últimos 15 dias, pelo criado_em — o mesmo relógio do cartão.
-    // atualizado_em e ciencia_em não servem de corte: edições e ciências em
-    // lote recarimbam os dois e ressuscitariam a coluna inteira.
+    // finalizados nos últimos 15 dias, pelo concluido_em (carimbado por gatilho
+    // no banco desde 28/08; banco-ajuste-concluido.sql). criado_em é a reserva
+    // para caso antigo sem carimbo. atualizado_em e ciencia_em não servem de
+    // corte: edições e ciências em lote recarimbam os dois.
     let antigos = 0;
     if(et.id==='concluido' && !verTodosConcl){
       const corte = Date.now() - 15*864e5;
-      const recentes = cs.filter(c => new Date(c.criado_em+'T00:00:00').getTime() >= corte);
+      const recentes = cs.filter(c => new Date(c.concluido_em || c.criado_em+'T00:00:00').getTime() >= corte);
       antigos = cs.length - recentes.length;
       cs = recentes;
     }
@@ -542,13 +543,13 @@ function pintarCliente(){
   let l = visiveis().slice().sort((a,b)=> ordCli==='antigos'
     ? String(a.criado_em||'').localeCompare(String(b.criado_em||''))
     : String(b.criado_em||'').localeCompare(String(a.criado_em||'')));
-  // A lista do cliente também esconde o arquivo morto (28/08/2026): pedido já
-  // encerrado (concluido) com mais de 15 dias de criado_em só aparece pelo
-  // botão do pé. Pedido em aberto nunca some, por mais antigo que seja.
+  // A lista do cliente também esconde o arquivo morto (28/08/2026): pedido
+  // encerrado há mais de 15 dias (concluido_em, com criado_em de reserva) só
+  // aparece pelo botão do pé. Pedido em aberto nunca some, por mais antigo.
   let antigosCli = 0;
   if(!verTodosConcl){
     const corte = Date.now() - 15*864e5;
-    const vis = l.filter(c => c.etapa!=='concluido' || new Date(c.criado_em+'T00:00:00').getTime() >= corte);
+    const vis = l.filter(c => c.etapa!=='concluido' || new Date(c.concluido_em || c.criado_em+'T00:00:00').getTime() >= corte);
     antigosCli = l.length - vis.length;
     l = vis;
   }
