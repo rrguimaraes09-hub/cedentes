@@ -87,6 +87,8 @@ input,select,textarea{font:inherit;color:inherit}
 .relogio.r1{color:var(--verd)} .relogio.r2{color:var(--amb)} .relogio.r3{color:var(--verm)}
 .card-socios{font-size:11px;color:var(--txt2);margin-top:6px;padding-top:6px;border-top:1px solid var(--linha)}
 .vazio{text-align:center;padding:22px 8px;color:#98a1ad;font-size:12px;font-style:italic}
+.col-vertodos{border:1px dashed #c9cfd8;background:#fff;color:var(--txt2);border-radius:8px;padding:8px;font-size:11.5px;font-weight:650;cursor:pointer;margin-top:2px}
+.col-vertodos:hover{color:var(--azul);border-color:var(--azul2)}
 
 /* ---------- gaveta ---------- */
 .fundo{position:fixed;inset:0;background:rgba(16,24,40,.45);opacity:0;pointer-events:none;transition:.2s;z-index:60}
@@ -278,6 +280,7 @@ let filtros = new Set(), busca = '', abertoId = null;
 let ordProntos = 'fin';   // ordem das colunas Entregue/Concluído: fin | pedido
 let ordCli = 'recentes';  // ordem da lista do cliente: recentes | antigos
 let colInvert = {};       // seta ⇅ por coluna do quadro: inverte a ordem da coluna
+let verTodosConcl = false; // Concluído mostra só os últimos 15 dias; true = histórico inteiro
 
 const ETAPAS = [
   {id:'recebido',  nome:'Recebidos',    cor:'#6b7b93', cli:'Recebido'},
@@ -450,22 +453,42 @@ function pintarBoard(){
   const l = visiveis();
   const st = etapasFiltradas();
   document.getElementById('board').innerHTML = ETAPAS.filter(et=>!st||st.has(et.id)).map(et=>{
-    const cs = l.filter(c=>c.etapa===et.id);
+    let cs = l.filter(c=>c.etapa===et.id);
     // Entregues/concluídos em ordem de finalização (pedido do Felipe, 28/08/2026):
     // o gatilho do banco carimba atualizado_em a cada mudança, então o caso que
     // acabou de ser movido aparece no topo. O seletor da barra troca para a
     // ordem por data do pedido.
     if(ordProntos==='fin' && (et.id==='entregue'||et.id==='concluido'))
       cs.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
+    // Concluído esconde o arquivo morto (pedido do Rafael, 28/08/2026): só os
+    // finalizados nos últimos 15 dias, medidos pelo mesmo atualizado_em da
+    // ordenação acima. O botão no pé da coluna revela o histórico inteiro.
+    let antigos = 0;
+    if(et.id==='concluido' && !verTodosConcl){
+      const corte = Date.now() - 15*864e5;
+      const recentes = cs.filter(c => new Date(c.atualizado_em || c.criado_em+'T00:00:00').getTime() >= corte);
+      antigos = cs.length - recentes.length;
+      cs = recentes;
+    }
     if(colInvert[et.id]) cs.reverse();
+    const btVer = et.id==='concluido' && (antigos>0 || verTodosConcl)
+      ? `<button class="col-vertodos" data-vertodos>${verTodosConcl
+          ? '− mostrar só os últimos 15 dias'
+          : '+ mostrar todos ('+antigos+' antigo'+(antigos===1?'':'s')+')'}</button>`
+      : '';
     return `<div class="col" data-etapa="${et.id}">
       <div class="col-topo"><div class="col-bola" style="background:${et.cor}"></div>
         <div class="col-nome">${et.nome}</div>
         <button class="col-ord ${colInvert[et.id]?'on':''}" data-ord="${et.id}" title="Inverter a ordem desta coluna">⇅</button>
         <div class="col-qtd">${cs.length}</div></div>
-      <div class="col-lista">${cs.length?cs.map(cartao).join(''):'<div class="vazio">nada aqui</div>'}</div>
+      <div class="col-lista">${cs.length?cs.map(cartao).join(''):'<div class="vazio">nada aqui</div>'}${btVer}</div>
     </div>`;
   }).join('');
+  document.getElementById('board').querySelectorAll('[data-vertodos]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    verTodosConcl = !verTodosConcl;
+    pintarBoard();
+  });
   document.getElementById('board').querySelectorAll('.col-ord').forEach(b => b.onclick = e => {
     e.stopPropagation();
     colInvert[b.dataset.ord] = !colInvert[b.dataset.ord];
