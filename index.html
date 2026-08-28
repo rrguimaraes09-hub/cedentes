@@ -700,10 +700,16 @@ async function enviarArquivo(c, arquivo, tipo, aoTerminar){
   if(aoTerminar) aoTerminar();
 }
 
-function abrirCaso(id){
+async function abrirCaso(id){
   const c = casos.find(x=>x.id===id); if(!c) return;
   abertoId = id;
   const adm = ehEscritorio();
+  // Minuta do parecer (tabela separada, só escritório — o RLS garante).
+  let minuta = null;
+  if(adm){
+    const r = await sb.from('casos_minutas').select('*').eq('caso_id', id).maybeSingle();
+    if(!r.error) minuta = r.data;
+  }
   const alvos = [{k:'emp',nome:c.cedente,doc:c.cnpj}].concat((c.socios||[]).map((s,i)=>({k:'s'+i,nome:s.nome,doc:s.cpf})));
 
   document.getElementById('gavTitulo').innerHTML = esc(c.cedente)+(c.urgente?' <span class="tagurg">URGENTE</span>':'');
@@ -741,6 +747,22 @@ function abrirCaso(id){
       : `<div class="envio"><input type="file" id="fRel" accept="application/pdf"></div>`}
     <div style="font-size:11px;color:var(--txt2);margin-top:5px">
       Insumo da análise. <b>O cliente não vê este arquivo.</b> O envio leva o caso para “Em parecer”.
+    </div>
+
+    <div class="gav-sec">Minuta do parecer — uso interno</div>
+    <textarea class="notas" id="minutaTexto" style="min-height:220px;font-size:12.5px;line-height:1.55"
+      placeholder="A esteira de análise preenche a minuta aqui. Também dá para escrever direto.">${esc(minuta?minuta.texto:'')}</textarea>
+    <div style="display:flex;gap:8px;margin-top:7px;align-items:center;flex-wrap:wrap">
+      <button class="bt bt-p" id="btMinutaSalvar">Salvar minuta</button>
+      <button class="bt bt-s" id="btMinutaImprimir">Imprimir / PDF</button>
+      <span id="minutaInfo" style="font-size:11px;color:var(--txt2)">${
+        minuta && minuta.atualizado_em
+          ? 'atualizada em '+dataHora(minuta.atualizado_em)+(minuta.atualizado_por?' por '+esc(minuta.atualizado_por):'')
+          : 'ainda sem minuta'
+      }</span>
+    </div>
+    <div style="font-size:11px;color:var(--txt2);margin-top:5px">
+      <b>O cliente não vê a minuta.</b> Revise, imprima em PDF e anexe abaixo como parecer definitivo.
     </div>
 
     <div class="gav-sec">Parecer — entregue ao cliente</div>
@@ -874,6 +896,22 @@ function abrirCaso(id){
     await carregar(); abrirCaso(id);
   });
 
+  const bMinS = document.getElementById('btMinutaSalvar');
+  if(bMinS) bMinS.onclick = async () => {
+    bMinS.disabled = true;
+    const { error } = await sb.from('casos_minutas').upsert({
+      caso_id: c.id,
+      texto: document.getElementById('minutaTexto').value,
+      atualizado_em: new Date().toISOString(),
+      atualizado_por: eu.nome
+    });
+    bMinS.disabled = false;
+    if(error){ alert('Não foi possível salvar a minuta: '+error.message); return; }
+    document.getElementById('minutaInfo').textContent = 'salva agora';
+  };
+  const bMinI = document.getElementById('btMinutaImprimir');
+  if(bMinI) bMinI.onclick = () => imprimirMinuta(c, document.getElementById('minutaTexto').value);
+
   const bs = document.getElementById('btSalvar');
   if(bs) bs.onclick = async () => {
     await sb.from('casos').update({notas:document.getElementById('notas').value}).eq('id',c.id);
@@ -890,6 +928,41 @@ function abrirCaso(id){
   };
   document.getElementById('btFechar2').onclick = fecharG;
   abrirG();
+}
+
+/* ---------- impressão da minuta do parecer ---------- */
+function imprimirMinuta(c, texto){
+  if(!(texto||'').trim()){ alert('A minuta está vazia.'); return; }
+  // Linha inteira em maiúsculas e curta = título de seção do parecer.
+  const eTitulo = l => l.length && l.length < 70 && l === l.toUpperCase() && /[A-ZÀ-Ü]/.test(l);
+  const corpo = texto.split('\n').map(l => {
+    const t = l.trim();
+    if(!t) return '<div class="vz"></div>';
+    if(eTitulo(t)) return `<div class="sec">${esc(t)}</div>`;
+    return `<p>${esc(t)}</p>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Parecer — ${esc(c.cedente)}</title>
+<style>
+  @page{size:A4;margin:22mm 20mm}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Georgia,'Times New Roman',serif;color:#1f2733;font-size:11.5pt;line-height:1.6}
+  .sec{font-size:11.5pt;font-weight:700;color:#14243d;letter-spacing:.4px;margin:16px 0 6px}
+  .sec:first-child{margin-top:0}
+  p{margin:0 0 8px;text-align:justify}
+  .vz{height:6px}
+  .pe{margin-top:30px;padding-top:10px;border-top:.5pt solid #e3e6ea;font-size:8pt;color:#8b95a3;text-align:center}
+  @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
+</style></head><body>
+${corpo}
+<div class="pe">Rua Anita Garibaldi, nº 79, sala 1002, Centro, Florianópolis/SC • contato@felipeadv.com.br • (48) 3024-4444</div>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if(!w){ alert('O navegador bloqueou a janela. Libere os pop-ups para este site e tente de novo.'); return; }
+  w.document.write(html);
+  w.document.close();
+  w.onload = () => { w.focus(); w.print(); };
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 400);
 }
 
 /* ---------- novo pedido ---------- */
