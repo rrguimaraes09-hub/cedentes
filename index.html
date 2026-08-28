@@ -560,7 +560,20 @@ function pintarCliente(){
    ========================================================================= */
 const gav = document.getElementById('gaveta'), fundo = document.getElementById('fundo');
 const abrirG  = () => { gav.classList.add('on'); fundo.classList.add('on'); };
-const fecharG = () => { gav.classList.remove('on'); fundo.classList.remove('on'); abertoId=null; };
+// Guarda contra perda de minuta (pedido do Felipe, 28/08/2026): qualquer saída
+// da gaveta com a minuta editada e não salva pede confirmação.
+let minutaOriginalTxt = null;
+const minutaSuja = () => {
+  const el = document.getElementById('minutaTexto');
+  return !!el && minutaOriginalTxt !== null && el.value !== minutaOriginalTxt;
+};
+const fecharG = () => {
+  if(minutaSuja() && !confirm('A minuta do parecer tem alterações NÃO SALVAS.\nFechar mesmo assim e descartá-las?')) return;
+  gav.classList.remove('on'); fundo.classList.remove('on'); abertoId=null; minutaOriginalTxt = null;
+};
+window.addEventListener('beforeunload', e => {
+  if(minutaSuja()){ e.preventDefault(); e.returnValue = ''; }
+});
 document.getElementById('gavFechar').onclick = fecharG;
 fundo.onclick = fecharG;
 
@@ -752,6 +765,11 @@ async function enviarArquivo(c, arquivo, tipo, aoTerminar){
 
 async function abrirCaso(id){
   const c = casos.find(x=>x.id===id); if(!c) return;
+  // Repinte do MESMO caso (ex.: após anexo ou troca de resultado): preserva a
+  // edição pendente da minuta. Troca de caso com minuta suja: confirma antes.
+  const elPrev = document.getElementById('minutaTexto');
+  const edicaoPendente = (id === abertoId && minutaSuja()) ? elPrev.value : null;
+  if(id !== abertoId && minutaSuja() && !confirm('A minuta do parecer tem alterações NÃO SALVAS.\nTrocar de caso mesmo assim e descartá-las?')) return;
   abertoId = id;
   const adm = ehEscritorio();
   // Minuta do parecer (tabela separada, só escritório — o RLS garante).
@@ -928,17 +946,22 @@ async function abrirCaso(id){
     await carregar(); abrirCaso(id);
   });
 
+  minutaOriginalTxt = adm ? (minuta ? minuta.texto : '') : null;
+  if(edicaoPendente !== null && document.getElementById('minutaTexto'))
+    document.getElementById('minutaTexto').value = edicaoPendente;
   const bMinS = document.getElementById('btMinutaSalvar');
   if(bMinS) bMinS.onclick = async () => {
     bMinS.disabled = true;
+    const txt = document.getElementById('minutaTexto').value;
     const { error } = await sb.from('casos_minutas').upsert({
       caso_id: c.id,
-      texto: document.getElementById('minutaTexto').value,
+      texto: txt,
       atualizado_em: new Date().toISOString(),
       atualizado_por: eu.nome
     });
     bMinS.disabled = false;
     if(error){ alert('Não foi possível salvar a minuta: '+error.message); return; }
+    minutaOriginalTxt = txt;
     document.getElementById('minutaInfo').textContent = 'salva agora';
   };
   const bMinI = document.getElementById('btMinutaImprimir');
@@ -946,6 +969,16 @@ async function abrirCaso(id){
 
   const bs = document.getElementById('btSalvar');
   if(bs) bs.onclick = async () => {
+    // O Salvar da gaveta salva TUDO: minuta pendente + anotações.
+    const mEl = document.getElementById('minutaTexto');
+    if(mEl && minutaSuja()){
+      const { error } = await sb.from('casos_minutas').upsert({
+        caso_id: c.id, texto: mEl.value,
+        atualizado_em: new Date().toISOString(), atualizado_por: eu.nome
+      });
+      if(error){ alert('Não foi possível salvar a minuta: '+error.message); return; }
+      minutaOriginalTxt = mEl.value;
+    }
     await sb.from('casos').update({notas:document.getElementById('notas').value}).eq('id',c.id);
     fecharG(); await carregar();
   };
@@ -999,6 +1032,8 @@ ${corpo}
 
 /* ---------- novo pedido ---------- */
 function abrirNovo(){
+  if(minutaSuja() && !confirm('A minuta do parecer tem alterações NÃO SALVAS.\nAbrir um novo pedido mesmo assim e descartá-las?')) return;
+  minutaOriginalTxt = null;
   const adm = ehEscritorio();
   document.getElementById('gavTitulo').textContent = 'Novo pedido de análise';
   document.getElementById('gavCorpo').innerHTML = `
