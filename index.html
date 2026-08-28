@@ -544,8 +544,9 @@ function pintarCliente(){
         }</div>
       </div>
       <div class="trilha">${trilha}</div>
-      ${c.parecer?`<button class="baixar" data-baixar="${c.id}">↓ Parecer</button>`:''}
-      ${c.parecer && !c.ciencia_em
+      ${c.parecer?`<button class="baixar" data-baixar="${c.id}">↓ Parecer</button>`
+        : c.parecer_texto?`<button class="baixar" data-verparecer="${c.id}">Parecer</button>`:''}
+      ${(c.parecer || c.parecer_texto) && !c.ciencia_em
         ? `<button class="baixar" data-ciencia="${c.id}" style="background:var(--azul-bg);color:var(--azul2)">✓ Confirmar recebimento</button>`
         : ''}
       ${c.ciencia_em?`<span style="font-size:11px;color:var(--verd);font-weight:650;white-space:nowrap">✓ recebimento confirmado</span>`:''}
@@ -714,7 +715,7 @@ ${adm ? `
 <h2>Andamento</h2>
 <table>
   <tr><th>Relatório de pesquisa</th><td>${c.relatorio ? 'enviado' : 'pendente'}</td></tr>
-  <tr><th>Parecer</th><td>${c.parecer ? 'enviado' : 'pendente'}${c.resultado ? ' — ' + rotuloResultado(c.resultado) : ''}</td></tr>
+  <tr><th>Parecer</th><td>${(c.parecer || c.parecer_texto) ? 'enviado' : 'pendente'}${c.resultado ? ' — ' + rotuloResultado(c.resultado) : ''}</td></tr>
   <tr><th>Aberto pelo cliente</th><td>${dataHora(c.parecer_aberto_em) || 'ainda não'}</td></tr>
   <tr><th>Ciência</th><td>${dataHora(c.ciencia_em) || 'aguardando'}</td></tr>
 </table>
@@ -724,7 +725,7 @@ ${c.notas ? `<h2>Anotações internas</h2><div class="obs">${esc(c.notas)}</div>
 <h2>Andamento</h2>
 <table>
   <tr><th>Situação</th><td>${(ETAPAS.find(e=>e.id===c.etapa)||{}).cli}</td></tr>
-  ${c.parecer ? `<tr><th>Parecer</th><td>disponível para download no painel${c.resultado ? ' — ' + rotuloResultado(c.resultado) : ''}</td></tr>` : ''}
+  ${(c.parecer || c.parecer_texto) ? `<tr><th>Parecer</th><td>disponível no painel${c.resultado ? ' — ' + rotuloResultado(c.resultado) : ''}</td></tr>` : ''}
 </table>
 `}
 
@@ -823,6 +824,7 @@ async function abrirCaso(id){
     <div style="display:flex;gap:8px;margin-top:7px;align-items:center;flex-wrap:wrap">
       <button class="bt bt-p" id="btMinutaSalvar">Salvar minuta</button>
       <button class="bt bt-s" id="btMinutaImprimir">Imprimir / PDF</button>
+      <button class="bt bt-p" id="btMinutaEntregar" style="background:var(--verd,#1e6b3a)">Entregar ao cliente</button>
       <span id="minutaInfo" style="font-size:11px;color:var(--txt2)">${
         minuta && minuta.atualizado_em
           ? 'atualizada em '+dataHora(minuta.atualizado_em)+(minuta.atualizado_por?' por '+esc(minuta.atualizado_por):'')
@@ -830,10 +832,14 @@ async function abrirCaso(id){
       }</span>
     </div>
     <div style="font-size:11px;color:var(--txt2);margin-top:5px">
-      <b>O cliente não vê a minuta.</b> Revise, imprima em PDF e anexe abaixo como parecer definitivo.
+      <b>O cliente não vê a minuta.</b> "Entregar ao cliente" publica este texto como parecer
+      (sem precisar de PDF) e marca o caso como entregue.
     </div>
 
     <div class="gav-sec">Parecer — entregue ao cliente</div>
+    ${c.parecer_texto ? `<div class="arq" style="background:#eef7ef"><span>📄</span>
+        <span class="nome">Parecer em texto${c.parecer_texto_em?' — entregue em '+dataHora(c.parecer_texto_em):''}</span>
+        <button class="bt bt-s" id="btVerParTxtAdm">Ver</button></div>` : ''}
     ${c.parecer
       ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
            <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>
@@ -841,7 +847,7 @@ async function abrirCaso(id){
            <input type="file" id="fPar" accept="application/pdf"></div>`
       : `<div class="envio"><input type="file" id="fPar" accept="application/pdf"></div>`}
     <div style="font-size:11px;color:var(--txt2);margin-top:5px">
-      Assinado pelo advogado. O envio marca o caso como entregue.
+      PDF assinado é opcional quando o parecer foi entregue em texto. O envio de PDF marca o caso como entregue.
       ${c.parecer?'<b>Substituir troca o arquivo que o cliente baixa.</b>':''}
     </div>
     ${c.etapa==='entregue' || c.ciencia_em ? `
@@ -863,9 +869,12 @@ async function abrirCaso(id){
     </div>
     `:`
     <div class="gav-sec">Parecer</div>
-    ${c.parecer
-      ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
-           <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>
+    ${(c.parecer || c.parecer_texto)
+      ? `${c.parecer
+           ? `<div class="arq"><span>📑</span><span class="nome">${esc(c.parecer.split('/').pop())}</span>
+                <button class="bt bt-s" id="btBaixarPar">Abrir</button></div>`
+           : `<div class="arq"><span>📑</span><span class="nome">Parecer disponível</span>
+                <button class="bt bt-s" id="btVerParTxt">Ler parecer</button></div>`}
          ${c.resultado?`<div class="linha-d" style="margin-top:8px"><div class="rot">Conclusão</div><div class="val">${rotuloResultado(c.resultado)}</div></div>`:''}
          ${c.ciencia_em
            ? `<div class="box-ok">✓ Recebimento confirmado em ${dataHora(c.ciencia_em)}</div>`
@@ -966,6 +975,31 @@ async function abrirCaso(id){
   };
   const bMinI = document.getElementById('btMinutaImprimir');
   if(bMinI) bMinI.onclick = () => imprimirMinuta(c, document.getElementById('minutaTexto').value);
+  const bMinE = document.getElementById('btMinutaEntregar');
+  if(bMinE) bMinE.onclick = async () => {
+    const txt = document.getElementById('minutaTexto').value;
+    if(!txt.trim()){ alert('A minuta está vazia.'); return; }
+    if(!confirm('Entregar este texto como PARECER ao cliente?\n\nO cliente passa a ver o parecer no painel e o caso é marcado como entregue.')) return;
+    bMinE.disabled = true;
+    const { error:e1 } = await sb.from('casos_minutas').upsert({
+      caso_id: c.id, texto: txt,
+      atualizado_em: new Date().toISOString(), atualizado_por: eu.nome
+    });
+    if(e1){ bMinE.disabled = false; alert('Não foi possível salvar a minuta: '+e1.message); return; }
+    minutaOriginalTxt = txt;
+    const { error:e2 } = await sb.from('casos').update({
+      parecer_texto: txt,
+      parecer_texto_em: new Date().toISOString(),
+      etapa: 'entregue'
+    }).eq('id', c.id);
+    bMinE.disabled = false;
+    if(e2){ alert('Não foi possível entregar: '+e2.message); return; }
+    await carregar(); abrirCaso(id);
+  };
+  const bVTA = document.getElementById('btVerParTxtAdm');
+  if(bVTA) bVTA.onclick = () => imprimirMinuta(c, c.parecer_texto, false);
+  const bVT = document.getElementById('btVerParTxt');
+  if(bVT) bVT.onclick = () => verParecerTexto(c);
 
   const bs = document.getElementById('btSalvar');
   if(bs) bs.onclick = async () => {
@@ -996,7 +1030,8 @@ async function abrirCaso(id){
 }
 
 /* ---------- impressão da minuta do parecer ---------- */
-function imprimirMinuta(c, texto){
+function imprimirMinuta(c, texto, autoPrint){
+  if(autoPrint === undefined) autoPrint = true;
   if(!(texto||'').trim()){ alert('A minuta está vazia.'); return; }
   // Linha inteira em maiúsculas e curta = título de seção do parecer.
   const eTitulo = l => l.length && l.length < 70 && l === l.toUpperCase() && /[A-ZÀ-Ü]/.test(l);
@@ -1026,8 +1061,21 @@ ${corpo}
   if(!w){ alert('O navegador bloqueou a janela. Libere os pop-ups para este site e tente de novo.'); return; }
   w.document.write(html);
   w.document.close();
-  w.onload = () => { w.focus(); w.print(); };
-  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 400);
+  if(autoPrint){
+    w.onload = () => { w.focus(); w.print(); };
+    setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} }, 400);
+  }
+}
+
+// Leitura do parecer entregue em texto. Para o cliente, registra a abertura
+// (mesmo mecanismo do PDF).
+async function verParecerTexto(c){
+  if(!c.parecer_texto) return;
+  imprimirMinuta(c, c.parecer_texto, false);
+  if(!ehEscritorio()){
+    await sb.rpc('registrar_abertura', {p_caso: c.id});
+    await carregar();
+  }
 }
 
 /* ---------- novo pedido ---------- */
@@ -1145,6 +1193,8 @@ document.getElementById('cliLista').addEventListener('click', e => {
   if(bc){ const c = casos.find(x=>x.id===bc.dataset.ciencia); if(c) darCiencia(c); return; }
   const bx = e.target.closest('[data-baixar]');
   if(bx){ const c = casos.find(x=>x.id===bx.dataset.baixar); if(c) baixarArquivo(c.parecer, c); return; }
+  const bv = e.target.closest('[data-verparecer]');
+  if(bv){ const c = casos.find(x=>x.id===bv.dataset.verparecer); if(c) verParecerTexto(c); return; }
   const card = e.target.closest('.cli-card');
   if(card && card.dataset.id) abrirCaso(card.dataset.id);
 });
