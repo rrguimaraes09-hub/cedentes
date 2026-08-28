@@ -435,6 +435,11 @@ function pintarBoard(){
   const st = etapasFiltradas();
   document.getElementById('board').innerHTML = ETAPAS.filter(et=>!st||st.has(et.id)).map(et=>{
     const cs = l.filter(c=>c.etapa===et.id);
+    // Entregues/concluídos em ordem de finalização (pedido do Felipe, 28/08/2026):
+    // o gatilho do banco carimba atualizado_em a cada mudança, então o caso que
+    // acabou de ser movido aparece no topo da coluna.
+    if(et.id==='entregue'||et.id==='concluido')
+      cs.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
     return `<div class="col" data-etapa="${et.id}">
       <div class="col-topo"><div class="col-bola" style="background:${et.cor}"></div>
         <div class="col-nome">${et.nome}</div><div class="col-qtd">${cs.length}</div></div>
