@@ -539,9 +539,19 @@ function pintarFiltros(){
 function pintarCliente(){
   // Ordenação por data (pedido do Rafael, 28/08/2026): o cliente controla se vê
   // os pedidos mais novos ou mais antigos primeiro. slice() evita mutar `casos`.
-  const l = visiveis().slice().sort((a,b)=> ordCli==='antigos'
+  let l = visiveis().slice().sort((a,b)=> ordCli==='antigos'
     ? String(a.criado_em||'').localeCompare(String(b.criado_em||''))
     : String(b.criado_em||'').localeCompare(String(a.criado_em||'')));
+  // A lista do cliente também esconde o arquivo morto (28/08/2026): pedido já
+  // encerrado (concluido) com mais de 15 dias de criado_em só aparece pelo
+  // botão do pé. Pedido em aberto nunca some, por mais antigo que seja.
+  let antigosCli = 0;
+  if(!verTodosConcl){
+    const corte = Date.now() - 15*864e5;
+    const vis = l.filter(c => c.etapa!=='concluido' || new Date(c.criado_em+'T00:00:00').getTime() >= corte);
+    antigosCli = l.length - vis.length;
+    l = vis;
+  }
   document.getElementById('cliTitulo').textContent = 'Pedidos de análise — '+eu.nome;
   document.getElementById('filtroCliStatus').innerHTML = GRUPOS_ETAPA.map(g=>
     `<button class="chip ${filtros.has('st:'+g.id)?'on':''}" data-f="st:${g.id}">${g.rotCli}</button>`).join('')
@@ -576,8 +586,13 @@ function pintarCliente(){
       ${c.ciencia_em?`<span style="font-size:11px;color:var(--verd);font-weight:650;white-space:nowrap">✓ recebimento confirmado</span>`:''}
     </div>`;
   }).join('') : `<div class="cli-card"><div class="vazio" style="width:100%">${
+    antigosCli ? 'Nenhum pedido recente.' :
     etapasFiltradas() ? 'Nenhum pedido nesse status.' : 'Nenhum pedido ainda. Use “Novo pedido”.'
   }</div></div>`;
+  if(antigosCli || verTodosConcl)
+    document.getElementById('cliLista').innerHTML += `<button class="col-vertodos" data-vertodos style="width:100%">${
+      verTodosConcl ? '− mostrar só os últimos 15 dias'
+                    : '+ mostrar todos ('+antigosCli+' encerrado'+(antigosCli===1?'':'s')+' antigo'+(antigosCli===1?'':'s')+')'}</button>`;
 }
 
 /* =========================================================================
@@ -1213,6 +1228,8 @@ document.getElementById('filtroCliStatus').addEventListener('change', e => {
   if(e.target.id === 'ordCli'){ ordCli = e.target.value; pintarCliente(); }
 });
 document.getElementById('cliLista').addEventListener('click', e => {
+  const bt = e.target.closest('[data-vertodos]');
+  if(bt){ verTodosConcl = !verTodosConcl; pintarCliente(); return; }
   const bc = e.target.closest('[data-ciencia]');
   if(bc){ const c = casos.find(x=>x.id===bc.dataset.ciencia); if(c) darCiencia(c); return; }
   const bx = e.target.closest('[data-baixar]');
