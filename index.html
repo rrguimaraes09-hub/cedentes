@@ -160,7 +160,9 @@ input,select,textarea{font:inherit;color:inherit}
 
 .carregando{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;z-index:90;font-size:13px;color:var(--txt2)}
 @media(max-width:640px){
-  .topo{padding:0 12px;gap:10px} .marca span.txt{display:none} .quem b{display:none}
+  .topo{padding:8px 12px;gap:8px;height:auto;min-height:52px;flex-wrap:wrap}
+  .marca span.txt{display:none} .quem b{display:none}
+  .btn-topo{padding:7px 10px;white-space:nowrap} .btn-topo .btx{display:none}
   .board{padding:12px} .col{width:250px;min-width:250px} .barra{padding:9px 12px}
 }
 </style>
@@ -209,8 +211,8 @@ const SUPABASE_ANON_KEY = "sb_publishable_MTMJaYe0e2kplnrR_TZfpA_Hq8JXXGK";
     <div class="marca"><div class="fa"><img src="https://rrguimaraes09-hub.github.io/logo-fa-branco.png" alt="F|A"></div><span class="txt">Análise de Cedentes</span></div>
     <div class="sep"></div>
     <div class="quem"><b id="quemNome">—</b><span class="selo" id="quemSelo">—</span></div>
-    <a class="btn-topo" href="https://rrguimaraes09-hub.github.io/" style="text-decoration:none;color:#fff;display:inline-block" title="Voltar ao Espaço do Cliente">⌂ Espaço do Cliente</a>
-    <button class="btn-topo btn-ouro" id="btNovo">+ Novo pedido</button>
+    <a class="btn-topo" href="https://rrguimaraes09-hub.github.io/" style="text-decoration:none;color:#fff;display:inline-block" title="Voltar ao Espaço do Cliente">⌂<span class="btx"> Espaço do Cliente</span></a>
+    <button class="btn-topo btn-ouro" id="btNovo">+<span class="btx"> Novo pedido</span></button>
     <button class="btn-topo" id="btSair">Sair</button>
   </div>
 
