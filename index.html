@@ -454,7 +454,7 @@ function cartao(c){
       <span class="card-cli">${esc(nomeCliente(c.cliente_id))}</span>
       <span class="relogio ${rc}">◷ ${d===0?'hoje':d+'d'}</span>
     </div>
-    ${nS?`<div class="card-socios">${nS} sócio${nS>1?'s':''} · ${cobertura(c)}% pesquisado</div>`:''}
+    ${nS?`<div class="card-socios">${nS} sócio${nS>1?'s':''}</div>`:''}
     ${c.resultado?`<div class="card-socios"><span class="tag ${(RESULTADOS.find(r=>r.id===c.resultado)||{}).cls}">${rotuloResultado(c.resultado)}</span></div>`:''}
     ${c.etapa==='entregue' ? `<div class="card-socios">${
         c.parecer_aberto_em
