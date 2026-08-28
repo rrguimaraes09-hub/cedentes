@@ -223,6 +223,9 @@ const SUPABASE_ANON_KEY = "sb_publishable_MTMJaYe0e2kplnrR_TZfpA_Hq8JXXGK";
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input type="text" id="busca" placeholder="Buscar por cedente, CNPJ ou sócio...">
       </div>
+      <button class="chip" data-f="st:recebido">Recebidos</button>
+      <button class="chip" data-f="st:analise">Em análise</button>
+      <button class="chip" data-f="st:pronto">Prontos</button>
       <button class="chip alerta" data-f="urgente">Urgentes</button>
       <button class="chip alerta" data-f="atrasado">Atrasados</button>
       <button class="chip alerta" data-f="naoaberto">Entregues sem abrir</button>
@@ -238,6 +241,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_MTMJaYe0e2kplnrR_TZfpA_Hq8JXXGK";
         <h1 id="cliTitulo">Meus pedidos de análise</h1>
         <div style="flex:1"></div>
       </div>
+      <div id="filtroCliStatus" style="display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px"></div>
       <div id="cliLista"></div>
     </div>
   </div>
@@ -277,6 +281,17 @@ const RESULTADOS = [
   {id:'negativo',            rot:'Negativo',                cls:'t-mov'}
 ];
 const rotuloResultado = r => (RESULTADOS.find(x=>x.id===r)||{}).rot || '—';
+// Filtro por status (pedido do Felipe, 28/08/2026): os mesmos três grupos que o
+// cliente já enxerga na trilha, disponíveis como chips nas duas visões.
+const GRUPOS_ETAPA = [
+  {id:'recebido', rotCli:'Recebido',   etapas:['recebido']},
+  {id:'analise',  rotCli:'Em análise', etapas:['pesquisa','relatorio','parecer']},
+  {id:'pronto',   rotCli:'Pronto',     etapas:['entregue','concluido']}
+];
+const etapasFiltradas = () => {
+  const on = GRUPOS_ETAPA.filter(g=>filtros.has('st:'+g.id));
+  return on.length ? new Set(on.reduce((a,g)=>a.concat(g.etapas),[])) : null;
+};
 const TRILHA = ['Recebido','Em análise','Pronto'];
 const TRIBUNAIS = ['TJSC','JFSC'];
 
@@ -395,6 +410,8 @@ function visiveis(){
   if(filtros.has('urgente'))  l = l.filter(c=>c.urgente);
   if(filtros.has('atrasado')) l = l.filter(c=>dias(c.criado_em)>=3 && !['entregue','concluido'].includes(c.etapa));
   if(filtros.has('naoaberto')) l = l.filter(c=>c.etapa==='entregue' && !c.parecer_aberto_em);
+  const st = etapasFiltradas();
+  if(st) l = l.filter(c=>st.has(c.etapa));
   filtros.forEach(f=>{ if(f.startsWith('cli:')) l = l.filter(c=>c.cliente_id===f.slice(4)); });
   return l;
 }
@@ -413,7 +430,8 @@ function cobertura(c){
 
 function pintarBoard(){
   const l = visiveis();
-  document.getElementById('board').innerHTML = ETAPAS.map(et=>{
+  const st = etapasFiltradas();
+  document.getElementById('board').innerHTML = ETAPAS.filter(et=>!st||st.has(et.id)).map(et=>{
     const cs = l.filter(c=>c.etapa===et.id);
     return `<div class="col" data-etapa="${et.id}">
       <div class="col-topo"><div class="col-bola" style="background:${et.cor}"></div>
@@ -453,6 +471,8 @@ function pintarFiltros(){
 function pintarCliente(){
   const l = visiveis();
   document.getElementById('cliTitulo').textContent = 'Pedidos de análise — '+eu.nome;
+  document.getElementById('filtroCliStatus').innerHTML = GRUPOS_ETAPA.map(g=>
+    `<button class="chip ${filtros.has('st:'+g.id)?'on':''}" data-f="st:${g.id}">${g.rotCli}</button>`).join('');
   document.getElementById('cliLista').innerHTML = l.length ? l.map(c=>{
     const at = c.etapa==='recebido' ? 0
              : ['pesquisa','relatorio','parecer'].includes(c.etapa) ? 1 : 2;
@@ -473,7 +493,9 @@ function pintarCliente(){
         : ''}
       ${c.ciencia_em?`<span style="font-size:11px;color:var(--verd);font-weight:650;white-space:nowrap">✓ recebimento confirmado</span>`:''}
     </div>`;
-  }).join('') : '<div class="cli-card"><div class="vazio" style="width:100%">Nenhum pedido ainda. Use “Novo pedido”.</div></div>';
+  }).join('') : `<div class="cli-card"><div class="vazio" style="width:100%">${
+    etapasFiltradas() ? 'Nenhum pedido nesse status.' : 'Nenhum pedido ainda. Use “Novo pedido”.'
+  }</div></div>`;
 }
 
 /* =========================================================================
@@ -967,6 +989,12 @@ document.querySelector('.barra').addEventListener('click', e => {
   const f = b.dataset.f;
   filtros.has(f) ? filtros.delete(f) : filtros.add(f);
   b.classList.toggle('on'); pintarBoard();
+});
+document.getElementById('filtroCliStatus').addEventListener('click', e => {
+  const b = e.target.closest('.chip'); if(!b) return;
+  const f = b.dataset.f;
+  filtros.has(f) ? filtros.delete(f) : filtros.add(f);
+  pintarCliente();
 });
 document.getElementById('cliLista').addEventListener('click', e => {
   const bc = e.target.closest('[data-ciencia]');
