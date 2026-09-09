@@ -1084,18 +1084,30 @@ function imprimirMinuta(c, texto, autoPrint){
   const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
 <title>Parecer — ${esc(c.cedente)}</title>
 <style>
-  @page{size:A4;margin:22mm 20mm}
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:Georgia,'Times New Roman',serif;color:#1f2733;font-size:11.5pt;line-height:1.6}
+  /* Timbrado 2026 (folha TIMBRADO-FA-2026.docx): as duas faixas repetem em toda
+     página (position:fixed) e a tabela com thead/tfoot reserva, página a página,
+     o espaço do cabeçalho (5,5 cm) e do rodapé (4,6 cm); laterais 3 cm / 2 cm. */
+  @page{size:A4;margin:0}
+  .tb-cab{position:fixed;top:0;left:0;width:210mm;height:54.19mm}
+  .tb-pe{position:fixed;bottom:0;left:0;width:210mm;height:43.78mm}
+  @media screen{ .tb-cab,.tb-pe{position:absolute} }
+  table.folha{width:100%;border-collapse:collapse}
+  table.folha thead td{height:55mm}
+  table.folha tfoot td{height:46mm}
+  table.folha tbody td{padding:0 20mm 0 30mm;vertical-align:top}
   .sec{font-size:11.5pt;font-weight:700;color:#14243d;letter-spacing:.4px;margin:16px 0 6px}
   .sec:first-child{margin-top:0}
   p{margin:0 0 8px;text-align:justify}
   .vz{height:6px}
-  .pe{margin-top:30px;padding-top:10px;border-top:.5pt solid #e3e6ea;font-size:8pt;color:#8b95a3;text-align:center}
   @media print{ body{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
 </style></head><body>
+<img class="tb-cab" src="https://rrguimaraes09-hub.github.io/timbrado-2026-cabecalho.png" alt="">
+<img class="tb-pe" src="https://rrguimaraes09-hub.github.io/timbrado-2026-rodape.png" alt="">
+<table class="folha"><thead><tr><td></td></tr></thead><tfoot><tr><td></td></tr></tfoot><tbody><tr><td>
 ${corpo}
-<div class="pe">Rua Desembargador Pedro Silva, nº 350, Ed. Henery, 1º Andar - Comerciário - Criciúma/SC - CEP 88.802-300 • felipe@felipeadv.com.br • Fone/WhatsApp: (48) 3056-0800</div>
+</td></tr></tbody></table>
 </body></html>`;
   const w = window.open('', '_blank');
   if(!w){ alert('O navegador bloqueou a janela. Libere os pop-ups para este site e tente de novo.'); return; }
